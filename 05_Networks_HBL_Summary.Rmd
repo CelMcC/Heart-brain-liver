@@ -1,0 +1,309 @@
+---
+title: "Multi-organ imaging clarifies the connected subclinical pathology of the heart-brain-liver axis in UK Biobank   | Networks Summary"
+
+author: "Celeste McCracken"
+date:   "25 May 2022"
+output: html_notebook
+---
+
+
+### 1. Setup
+```{r}
+source("00_setup.R")
+
+library(lavaan)
+
+
+fmt2<- function(x) { sprintf("%1.2f", x) }
+fmt3<- function(x) { sprintf("%1.3f", x) }
+
+outwidth<- 2000
+
+proc<- read_xlsx("../Proc.xlsx", sheet= "Networks")
+```
+
+### 2. Main data input
+```{r}
+IP<- readRDS("../Dev Data 1/IP_1.rds"); dim(IP); get_checksum(IP)
+# [1] 502462    269
+# [1] 24733293
+
+SEM<- IP %>% filter(SEM_flag==1) %>% selective_scale(); 
+dim(SEM)
+#6865  269
+```
+### 3. Final models
+```{r}
+models<- readRDS("Networks_HBL_run2.rds")
+names(models)<- c("1a", "1b", "2a", "2b", "3a", "3b", "4a", "4b")
+
+brain<- c("O_volume_grey_matter_2", "O_volume_WMH_cbrt", "ICVF", "ISOVF")
+```
+#--------------------
+```{r}
+reslist<- list()
+
+full<- map(models, ~parameterestimates(.x, standardized = TRUE, rsquare= TRUE)) %>%
+  bind_rows(.id= "Model") 
+
+tids<- full %>%
+   filter(label %like% "a|b|c|d|e|f" | op %in% c(":=", "r2")) %>% 
+   mutate(Sig= ifelse(pvalue < 0.05, "*", "")) %>% print() %>%
+   to_clipboard()
+
+fits<- map(models, fitmeasures) %>% bind_rows(.id= "Model")
+
+reslist$full<- full
+reslist$fits<- fits
+```
+## Find best form for each brain outcome
+```{r}
+t1<- full %>% filter(lhs %in% brain, op== "r2") %>% select(Model, lhs, est)
+t2<- fits %>% select(Model, chisq, rmsea:rmsea.ci.upper)
+tx<- full_join(t1, t2)
+tx
+```
+
+
+### Output tables (Supp Table 11)
+```{r}
+
+chosen_models<- c("1a", "2b", "4a")
+
+fitcols<- c("Model", "npar", "chisq", "df", "baseline.chisq", "baseline.df", "cfi", "tli", "ntotal", "rmsea", "rmsea.ci.lower", "rmsea.ci.upper")
+
+s0<- fits %>% filter(Model %in% chosen_models) %>%
+  select(all_of(fitcols)) 
+
+
+s0$Comment1= with(s0, paste0("Chi-square = ",
+                  fmt2(chisq),
+                  " (df= ",df, ")"))
+s0$Comment2= with(s0, paste0("RMSEA = ",
+                  fmt3(rmsea), " (", fmt3(rmsea.ci.lower), ", ", fmt3(rmsea.ci.upper), ")"))
+s0$Comment3= with(s0, paste0("TLI = ", fmt3(tli)))
+s0$Comment4= with(s0, paste0("N = ", format(ntotal, big.mark= ",")))
+
+reslist$fit_small<- s0
+
+s1<- s0 %>% select(Model, Comment1:Comment4) %>%
+  gather(key, value, -Model) %>% arrange(Model, key) %>% to_clipboard()
+
+chosen_tids<- tids %>% filter(Model %in% chosen_models)
+reslist$tids_small<- chosen_tids
+
+write_xlsx(reslist, "HBL_Networks_models_1.xlsx")
+```
+
+
+```{r}
+# Convert model output to diagram input
+
+mbits<- tids %>% 
+        full_join(proc %>% select(lhs= Var, leftName= CovName, leftOrg= Role)) %>% 
+        full_join(proc %>% select(rhs= Var, rightName= CovName, rightOrg= Role)) %>%
+        filter(!is.na(se)) %>%
+        mutate(Line= row_number(),
+                est= fmt3(est),
+               leftLabel = str_sub(leftName, 6) %>% str_wrap(20),
+               rightLabel= str_sub(rightName, 6) %>% str_wrap(20))
+
+```
+
+#---------------
+### Grey matter volume 
+```{r}
+tag<- "1a"
+## Intentionally reversed to guide the correct labelling
+mbit<- mbits %>% filter(Model== tag) %>% select(rhs, lhs, est) %>% print()
+
+
+    g1<- DiagrammeR::grViz(" digraph G {
+
+    graph [rankdir= 'BT', layout= 'neato',  fontname = 'Avenir']
+    node [style= filled, color= 'white', fillcolor= 'white', width= 2.3, 
+              shape = box, height= 0.75, fontname = 'Avenir', fontsize= 14]
+    edge [arrowsize= 1, penwidth= 3, color= '#e6e6e6', fontname = 'Avenir', fontsize = 13]
+
+	  Brain [label = 'Grey matter\nvolume',  pos= '8, 1.5!', fillcolor = '#e6e6e6'];
+	  LVSV [label = 'Reduced LV stroke\nvolume (lower LVSV)',  pos= '4, 2!', fillcolor = '#E9CBCD'];
+    aos [label = 'Aortic stiffening\n(lower AoD)', pos= '4, 0!', fillcolor= '#E9CBCD', width= 2];
+        
+    ct1  [label = 'Liver fibro-\ninflammation (cT1)', pos= '0, 0!', fillcolor= '#CBE0E1', width= 2.1];
+    pdff [label = 'Liver fat (PDFF)', pos= '0, 2!', fillcolor= '#CBE0E1', width= 1.8];
+    
+    LVSV -> Brain [headlabel = '@@1',  color = '#E9CBCD', tailport= 'e', headport= 'w', labeldistance= 7, labelangle= -10]
+    aos -> Brain [headlabel = '@@2',  color = '#E9CBCD',  labeldistance= 10, labelangle= -9]
+    ct1 -> Brain [headlabel = '@@3', color = '#CBE0E1', labeldistance= 18, labelangle= -4]
+    pdff -> LVSV [label = '@@4',  color = 'grey85']
+    ct1 -> LVSV [headlabel = '@@5',  color = 'grey85', labeldistance= 8, labelangle= -10]
+}
+      [1]:  mbit$est[1]
+      [2]:  mbit$est[2]
+      [3]:  mbit$est[3]
+      [4]:  mbit$est[4]
+      [5]:  mbit$est[5]
+
+	")
+
+print(g1)
+g1 %>% DiagrammeRsvg::export_svg() %>% charToRaw() %>% rsvg::rsvg_png("HBL_1a.png", width= outwidth)
+
+```
+### Diagram WMH
+
+```{r}
+tag<- "2b"
+## Intentionally reversed to guide the correct labelling
+mbit<- mbits %>% filter(Model== tag) %>% select(rhs, lhs, est) %>% print()
+print(unique(c(mbit$rhs, mbit$lhs)))
+
+
+    g2<- DiagrammeR::grViz(" digraph G {
+
+    graph [rankdir= 'BT', layout= 'neato',  fontname = 'Avenir']
+    node [style= filled, color= 'white', fillcolor= 'white', width= 2.3, height= 0.75, fontname = 'Avenir', shape = box, fontsize= 14]
+    edge [arrowsize= 1, penwidth= 3, color= '#e6e6e6', fontname = 'Avenir', fontsize = 13]
+
+	  Brain [label = 'White matter hyper-\nintensities (WMH)',  pos= '8, 1.5!', fillcolor = '#e6e6e6'];
+	  
+    GFI [label = 'Reduced LV function\n(lower LV GFI)', pos= '1.75, 1.65!', fillcolor = '#E9CBCD', width= 2.1];
+    LVM [label = 'Concentric LV remodelling\n(higher LVM/LVEDV)', pos= '0, 0.75!', fillcolor= '#E9CBCD', width = 2.7];
+    aos [label = 'Aortic stiffening\n(lower AoD)', pos= '3.9, 2.5!', fillcolor= '#E9CBCD', width= 2];
+    
+    ct1  [label = 'Liver fibro-\ninflammation (cT1)', pos= '3.9, 0.5!', fillcolor= '#CBE0E1', width= 2];
+    
+    GFI -> Brain [headlabel = '@@1' , color= '#E9CBCD', labeldistance= 12, labelangle= -5]
+    LVM -> Brain [label = '@@2' , color= '#E9CBCD']
+    aos -> Brain [headlabel = '@@3', color= '#E9CBCD', labeldistance= 5, labelangle= -15]
+    ct1 -> Brain [label = '@@4', color= '#CBE0E1']
+    LVM -> ct1 [headlabel = '@@5', color= 'grey80', labeldistance= 5, labelangle= -12]
+}
+      [1]:  mbit$est[1]
+      [2]:  mbit$est[2]
+      [3]:  mbit$est[3]
+      [4]:  mbit$est[4]
+      [5]:  mbit$est[5]
+
+	")
+
+print(g2)
+g2 %>% DiagrammeRsvg::export_svg() %>% charToRaw() %>% rsvg::rsvg_png("HBL_2b.png", width= outwidth)
+
+```
+### Diagram ICVF
+
+```{r}
+tag<- "3a"
+## Intentionally reversed to guide the correct labelling
+mbit<- mbits %>% filter(Model== tag) %>% select(rhs, lhs, est) %>% print()
+print(unique(c(mbit$rhs, mbit$lhs)))
+
+    g3<- DiagrammeR::grViz(" digraph G {
+
+    graph [rankdir= 'BT', layout= 'neato', fontname = 'Avenir']
+    node [style= filled, color= 'white', fillcolor= 'white', width= 2.3, height= 1, fontname= 'Avenir',
+    shape= box, fontsize= 14, height= 0.75]
+    edge [arrowsize= 1, penwidth= 3, color= '#e6e6e6', fontname= 'Avenir', fontsize= 13]
+
+	  Brain [label = 'Neurite density\n(ICVF)', pos= '8, 1.365!', fillcolor = '#e6e6e6'];
+    GFI [label = 'Reduced LV function\n(lower LV GFI)', pos= '5, 0!', fillcolor = '#E9CBCD'];
+    LVM [label = 'Concentric LV remodelling\n(higher LVM/LVEDV)', pos= '3, 1.365!', fillcolor = '#E9CBCD', fontsize= 13, width= 2.7];
+    aos [label = 'Aortic stiffening\n(lower AoD)', pos= '5, 2.75!', fillcolor = '#E9CBCD'];
+        
+    ct1 [label = 'Liver fibro-\ninflammation (cT1)', pos= '0, 0!', fillcolor = '#CBE0E1'];
+    pdff [label = 'Liver fat (PDFF)', pos= '0, 2.75!', fillcolor = '#CBE0E1'];
+    
+    GFI -> Brain [label = '@@1', color= '#E9CBCD']
+    LVM -> Brain [label = '@@2', color= '#E9CBCD']
+    aos -> Brain [headlabel = '@@3', color= '#E9CBCD', labeldistance= 5, labelangle= -15]
+    pdff -> Brain [headlabel = '@@4', color= '#CBE0E1', labeldistance= 15, labelangle= -5]
+    ct1 -> Brain [label = '@@5', color= '#CBE0E1']
+    pdff -> LVM [headlabel = '@@6', color= 'grey85', labeldistance= 4, labelangle= -20]
+    ct1 -> LVM [label = '@@7', color= 'grey85']
+   
+}
+      [1]:  mbit$est[1]
+      [2]:  mbit$est[2]
+      [3]:  mbit$est[3]
+      [4]:  mbit$est[4]
+      [5]:  mbit$est[5]
+      [6]:  mbit$est[6]
+      [7]:  mbit$est[7]
+
+	")
+
+print(g3)
+g3 %>% DiagrammeRsvg::export_svg() %>% charToRaw() %>% rsvg::rsvg_png("HBL_3a.png", width= outwidth)
+
+```
+### Diagram ISOVF
+
+```{r}
+tag<- "4a"
+## Intentionally reversed to guide the correct labelling
+mbit<- mbits %>% filter(Model== tag) %>% select(rhs, lhs, est) %>% print()
+print(unique(c(mbit$rhs, mbit$lhs)))
+
+    g4<- DiagrammeR::grViz(" digraph G {
+
+    graph [rankdir= 'BT', layout= 'neato', fontname = 'Avenir']
+    node [style= filled, color= 'white', fillcolor= 'white', width= 2, fontname= 'Avenir', shape= box, height= 0.75, width= 2.3, fontsize= 14]
+    edge [arrowsize= 1, penwidth= 3, color= '#e6e6e6', fontname= 'Avenir', fontsize= 13]
+
+	  Brain [label = 'Free-water fraction\n(ISOVF)', pos= '8, 4.55!',  fillcolor = '#e6e6e6'];
+    aos [label = 'Aortic stiffening\n(lower AoD)', pos= '4, 5.5!', fillcolor = '#E9CBCD', width= 2];
+    ct1 [label = 'Liver fibro-\ninflammation (cT1)', pos= '0, 4.55!', fillcolor = '#CBE0E1', width= 2.1];
+    
+    aos -> Brain [headlabel= '@@1', color= '#E9CBCD', labeldistance= 8, labelangle= -8]
+    ct1 -> Brain [label= '@@2', color= '#CBE0E1']
+    
+}
+      [1]:  mbit$est[1]
+      [2]:  mbit$est[2]
+      
+	")
+
+print(g4)
+g4 %>% DiagrammeRsvg::export_svg() %>% charToRaw() %>% rsvg::rsvg_png("HBL_4a.png", width= outwidth)
+#}
+```
+#--------------
+### Combine and plot
+```{r}
+
+library(png)
+library(grid)
+library(gridExtra)
+
+plot1 <- readPNG('HBL_1a.png') %>% rasterGrob()
+plot2 <- readPNG('HBL_2b.png') %>% rasterGrob()
+plot3 <- readPNG('HBL_3a.png') %>% rasterGrob()
+plot4 <- readPNG('HBL_4a.png') %>% rasterGrob()
+
+```
+
+
+```{r}
+ggpubr::ggarrange(plot1, plot2, plot4,ncol=1,
+                  labels= c("a) Adverse associations with overall grey matter volume",
+                            "b) Greater accumulation of white matter hyperintensities",
+                            "c) Adverse alterations in white matter microstructure"),
+                  hjust= 0,
+                  vjust= c(1.5, 1.5, 0.4),
+                  font.label = list(family= "Avenir Heavy"),
+                  widths= 1000, heights= c(2.1, 2.4, 1.3)) #%>%
+#ggpubr::ggexport(filename = "HBL_combo.tiff", res= 300, width =3000, height= 2850)
+```
+```{r}
+fig<- ggpubr::ggarrange(plot1, plot2, plot4,ncol=1,
+                  labels= c("a) Adverse associations with overall grey matter volume",
+                            "b) Accumulation of white matter hyperintensities",
+                            "c) Adverse alterations in white matter microstructure"),
+                  hjust= 0,
+                  vjust= c(1.8, 1.6, 1.5),
+                  font.label = list(family= "Avenir Heavy", size= 20),
+                  widths= 1000, heights= c(2.1, 2, 1.5)) #%>%
+ggpubr::ggexport(fig, filename = "HBL_combo2.png", width =1000, height= 950)
+```
+

@@ -1,0 +1,393 @@
+---
+title: "Multi-organ imaging clarifies the connected subclinical pathology of the heart-brain-liver axis in UK Biobank   | Pairwise analysis, plots and tables"
+
+author: "Celeste McCracken"
+date:   "25 May 2022"
+output: html_notebook
+---
+
+
+### 1. Setup
+```{r}
+
+## See setup file for packages and functions
+source("00_setup.R")
+
+## Output folder
+thisFileFolder<- "/Users/celeste/Documents/HBL_Simplified/R/April2022/"
+
+## Process document (for labels and metadata)
+proc<-  read_xlsx("../Proc.xlsx")
+```
+
+### 2. Main data input
+```{r}
+IP<- readRDS("../Dev Data 1/IP_1.rds"); dim(IP); get_checksum(IP)
+# [1] 502462    269
+# [1] 24733293
+```
+
+
+### 3. Specifications
+
+```{r}
+
+heart<-       c("cmr_LVM_LVEDV",  "cmr_LVSV_i", "cmr_GFI", "log_PDA_AoD")
+
+brain<-       c("O_volume_brain_grey_white_matter_2",  "O_volume_grey_matter_2",   
+                "O_volume_WMH_cbrt", "ISOVF", "ICVF")
+
+liver<-       c("log_pdff", "NAFLD", "ct1", "ct1_750", "trans_iron")
+
+cognition<-    c("cog_standard_4")
+
+modvars<-     c(heart, brain, liver, cognition)
+
+#---
+
+confounders<- c("cf_head_size_2_imp", "cf_age_2", "cf_age_sq", "cf_sex", "cf_UKB_site_name_2", 
+                "cf_pos_X_2_imp", "cf_pos_Y_2_imp", "cf_pos_Z_2_imp", "cf_pos_T_2_imp", "cf_date_2_numeric")
+
+covariates1<- c("age_2", "sex", "age_sq", "height_2_imp",  "sbp_2_imp", "bc_TchoL_0_imp", "bc_HbA1c_0_imp", 
+                "bc_RBC_0_imp", "alcohol_con_2_imp", "smoker_2", "trans_mets_2_imp", "educ_imp",
+                "deprivation_Townsend_imp")
+
+risk_factors<- c("R01_Diabetes_status_2", "R02_High_cholesterol_status_2", "R03_Hypertension_status_2",  "obese")
+
+covariates2<-  c(covariates1, risk_factors)
+
+confound_string<-  "cf_head_size_2_imp + cf_age_2:cf_sex +  cf_age_2:cf_UKB_site_name_2 + cf_sex:cf_UKB_site_name_2 + cf_age_2:cf_age_sq + cf_sex:cf_age_sq + cf_pos_X_2_imp + cf_pos_Y_2_imp + cf_pos_Z_2_imp + cf_pos_T_2_imp +  cf_date_2_numeric"
+
+flags<-    c("heart_flag", "liver_flag",  "maximum_set", "brain_imaging_flag")
+
+allvars<-  c(heart, brain, liver, covariates2, confounders, cognition, flags)
+
+# Check
+setdiff(allvars, names(IP))
+```
+
+### 4. Modelling set(s)
+```{r}
+sett<- IP %>%
+  filter(maximum_set==TRUE) %>%
+  select(all_of(c("f.eid", allvars))) %>%
+  selective_scale()
+
+dim(sett) # 30444    47
+
+liver_subset<- sett %>% filter(liver_flag==1) 
+
+dim(liver_subset) # 15097    47
+
+reslist<- list()
+
+```
+
+#=======================
+# Main analysis
+#------------------
+
+### 1. Brain with heart/liver
+
+
+```{r}
+titleText<-  "1. Brain with heart/liver"
+exposures<-  c(liver, heart, cognition)
+outcomes<-   brain
+
+t0<- expand_grid(Outcomes= outcomes, 
+                 Exposures= exposures, 
+                 Type = c("Type_3")) %>%
+                 compile_formulas(imaging_confounders = TRUE)
+
+(N<- nrow(t0)) # 50
+names(t0$formulas)<- t0$ID
+
+mdls1<-     map(1:nrow(t0), ~safelm(.x, dataset= sett)) %>% bind_rows(.id= "ID")
+res1<-      mdls1  %>% standard_linear();  putHere(res1)
+
+#Sig threshhold sits at 0.03
+
+out1<- res1 %>% filter(is_exposure) %>% select(-formulas) %>% print() 
+
+```
+
+### 2. Liver and heart
+
+```{r}
+titleText<-  "2. Liver and heart"
+exposures<-  liver
+outcomes<-   heart
+
+t0<- expand_grid(Outcomes= outcomes, 
+                 Exposures= exposures, 
+                 Type = c("Type_3")) %>%
+                 compile_formulas(imaging_confounders = FALSE)
+
+(N<- nrow(t0)) # 96
+names(t0$formulas)<- t0$ID
+
+mdls2<-      map(1:nrow(t0), ~safelm(.x, dataset= sett)) %>% bind_rows(.id= "ID")
+res2<-       mdls2  %>% standard_linear() ; putHere(res2)
+
+#Sig threshhold sits at 0.031
+
+out2<- res2 %>% filter(is_exposure) %>% select(-formulas) %>% print() 
+
+```
+
+### 3. Confounder effects 1
+```{r}
+titleText<-  "3. Confounder models (Heart and liver)"
+exposures<-  risk_factors
+outcomes<-   c(heart, liver)
+
+t0<- expand_grid(Outcomes= outcomes, 
+                 Exposures= exposures, 
+                 Type = c("Type_2")) %>%
+                 compile_formulas(imaging_confounders = FALSE)
+
+(N<- nrow(t0)) # 36
+names(t0$formulas)<- t0$ID
+
+mdls3<-     map(1:nrow(t0), ~safelm(.x, dataset= sett)) %>% bind_rows(.id= "ID")
+res3<-      mdls3 %>% standard_linear(); putHere(res3)
+
+#Sig threshhold sits at 0.039
+
+out3<- res3 %>% filter(is_exposure) %>% select(-formulas) %>% print() 
+```
+
+### 4. Confounder effects 2
+```{r}
+titleText<-  "4 Confounder models (Brain)"
+exposures<-  risk_factors
+outcomes<-   brain
+
+t0<- expand_grid(Outcomes= outcomes, 
+                 Exposures= exposures, 
+                 Type = c("Type_2")) %>%
+                 compile_formulas(imaging_confounders = TRUE)
+
+(N<- nrow(t0)) # 20
+names(t0$formulas)<- t0$ID
+
+mdls4<-     map(1:nrow(t0), ~safelm(.x, dataset= sett)) %>% bind_rows(.id= "ID")
+res4<-      mdls4  %>% standard_linear(); putHere(res4)
+
+# Sig threshhold sits at 0.035
+
+out4<- res4 %>% filter(is_exposure) %>% select(-formulas) %>% print() 
+```
+
+
+#===============
+
+### Main plots
+
+```{r}
+resall<- bind_rows(res1, res2, res3, res4)
+
+reslist$all<- resall
+```
+
+
+```{r}
+# Reapply the FDR adjustment across all analyses
+
+out<- resall %>% filter(is_exposure) %>%
+  rename(sig_orig= sig_by_fdr) %>%
+  apply_fdr_to_set() %>%
+  mutate(Sig= ifelse(sig_by_fdr== "*", 1, 0.25))
+
+table(out$sig_by_fdr, out$sig_orig)  # Picked up 3 extra than piece wise analyses
+  #       *
+  #   24  0
+  # *  3 99
+
+report_cutoff(out)
+# Sig threshhold sits at 0.04
+```
+
+
+
+### -- Prepare plot data
+```{r}
+out<- out %>%
+  left_join(proc %>% select(Outcomes= Var, Role)) %>%
+  mutate(Ones = 1,
+         ExpEF= str_to_sentence(ExpEF),
+         Role=  str_wrap(Role, 16),
+         Adjustment = ifelse(Type %like% "1", "by covariate set", "by covariates and\ndiagnoses"))
+
+# Tidy Outcome labels
+
+out$OutName<- str_remove(out$OutName, " \\(WMH\\)")
+out$OutName<- str_remove(out$OutName, " \\(AoD\\)")
+
+onames<-      names(table(out$OutName)) %>% print()
+olabels<-     onames %>% str_sub(6) %>% str_wrap(18) %>% 
+                str_replace("brain volume", "brain\\\nvolume") %>%
+                str_replace("matter volume", "matter\\\nvolume")
+
+out$OutName<- ordered(out$OutName, levels= onames, labels= olabels)
+
+# Tidy Exposure labels
+                 
+enames<-      names(table(out$ExpName)) %>% print() 
+elabels<-     enames %>% str_sub(6)
+out$ExpName<- ordered(out$ExpName, levels= enames, labels= elabels)
+
+# Tidy Organ labels
+
+
+out$Role<-  ordered(out$Role, 
+                    levels= c("Brain healthy", "Brain adverse", 
+                              "Healthy heart\nfeatures", "Adverse heart"),
+                    labels= c("Healthy brain features", "Adverse brain features", 
+                              "Healthy heart features", "Adverse heart"))
+
+POS<- position_dodge(width= 0.6 )
+
+```
+
+
+### ---- Main Plot 1
+
+```{r}
+myTeal<- "#76B2B5"
+myRed<-  "#C77271"
+mygrey<- "grey90"
+
+s01<- out %>% filter(Analysis %like% "1") 
+
+g1<- ggplot(s01, aes(x= estimate, y= fct_rev(ExpName), fill= Direction,  alpha= I(Sig))) +
+        geom_col() +
+        geom_errorbarh(aes(xmin= conf.low, xmax= conf.high), height= 0.2) +
+        geom_vline(xintercept = 0, size= 0.15) +
+        facet_nested(Ones ~ Role + OutName, strip= mystrips1) +
+        geom_hline(yintercept = c(5.5,  9.5), size= 0.1) +
+        theme(text= element_text(family= "Avenir"),
+              legend.position = "none",
+              #plot.margin = margin(-0, 0, 0, 0),
+              axis.text.y= element_text(margin= margin(0, 0, 0, -15)),
+              axis.text.x= element_text(size= 8, angle= 90)) +
+        scale_fill_manual(values= c(myRed, myTeal, mygrey)) +
+        labs(y= "", x="", color= "Model") +
+        guides(color= guide_legend(reverse= TRUE)); g1
+g1
+
+```
+### ---- Main Plot 2
+```{r}
+s02<- out %>% filter(Analysis %like% 2)
+
+s02$Direction<- ifelse(s02$Direction== "Neg", "Negative", "Positive")
+
+g2<- ggplot(s02, aes(x= estimate, y= fct_rev(ExpName), fill= Direction, alpha= I(Sig))) +
+      geom_col() +
+      geom_errorbarh(aes(xmin= conf.low, xmax= conf.high), height= 0.2) +
+      facet_nested(Ones~ Role + OutName, strip= mystrips2) +
+     scale_x_continuous(breaks= c(-0.3, -0.2, -0.1, 0, 0.1, 0.2, 0.3)) +
+       theme(text= element_text(family= "Avenir"),
+             legend.position = "none",
+             axis.title.x= element_text(size= 10, margin= margin(10, 0, 0 ,0)),
+             plot.margin = margin(-10, 0, 0, 0),
+            axis.text.x= element_text(size= 8, angle= 90)) +
+      scale_fill_manual(values= c(myRed, myTeal)) +
+      labs(y= "", x="Standardised beta"); g2
+
+```
+### --- Combine and print
+```{r}
+
+png("New_combined_main.png", width= 2400, height= 1800, res= 300)
+grid::grid.draw(egg::ggarrange(plots=list(g1,g2), ncol=1,
+         heights= c(3.6, 1.7),
+         labels= c("\na) Brain associations\n   with heart and liver\n   exposures", 
+                     "b) Heart associations\n   with liver exposures"),
+         label.args= list(gp= grid::gpar(fontfamily= "Avenir Heavy", fontsize= 10, hjust= 1, 
+                                   lineheight= 0.85, x=unit(3,"line"))),
+          padding= unit(0.5, "line")))
+
+dev.off()
+```
+
+### --- Combined confounder plot
+```{r}
+s0<- bind_rows(out3, out4)
+
+s0$OutName<- str_replace(s0$OutName, "^6", "3")
+s0$ExpName<- ifelse(s0$ExpName== "1016_Obese (BMI >= 30)", "1016_Obesity", s0$ExpName)
+
+onames<-     names(table(s0$OutName)) %>% print()
+olabels<-    onames %>% str_sub(6)
+s0$OutName<- ordered(s0$OutName, levels= onames, labels= olabels)
+
+enames<-     names(table(s0$ExpName)) %>% print()
+elabels<-    enames %>% str_sub(6)
+s0$ExpName<- ordered(s0$ExpName, levels= enames, labels= elabels)
+```
+
+```{r}
+ggplot(s0, aes(x= estimate, y= fct_rev(OutName), fill= Direction, alpha= I(Sig))) +
+        geom_col() +
+        geom_errorbarh(aes(xmin= conf.low, xmax= conf.high), height= 0.2) +
+        geom_vline(xintercept = 0, size= 0.15) +
+        facet_wrap(~ExpName, ncol= 4) +
+        geom_hline(yintercept = c(5.5, 9.5), size= 0.15) +
+        theme(text= element_text(family= "Avenir"),
+              legend.position = "none",
+              strip.background = element_rect(color= "grey40", size= 0.2, fill= "grey90"),
+              strip.text = element_text(color= "black", family= "Avenir Heavy"),
+              axis.text.y= element_text(margin= margin(0, 0, 0, -15)),
+              axis.text.x= element_text(size= 8, angle= 90)) +
+        scale_fill_manual(values= c(myRed, myTeal, mygrey)) +
+        scale_x_continuous(breaks= seq(-0.2, 0.8, 0.2)) +
+        labs(y= "", x="", color= "Model") +
+        guides(color= guide_legend(reverse= TRUE)); 
+#ggsave("temp2.png")
+```
+#================
+### Main tables
+
+
+### Supplementary
+```{r}
+
+# Liver-brain
+
+tt01<- out %>% filter(Analysis %like% "1", !term %in% heart) %>% table1_fun()
+reslist[["Supp_table_7"]]<- tt01
+
+# Heart-brain
+
+tt02<- out %>% filter(Analysis %like% "1", term %in% c(cognition, heart)) %>% table1_fun()
+reslist[["Supp_table_8"]]<- tt02
+
+# Liver- heart
+
+tt03<- out %>% filter(Analysis %like% "2")  %>% table1_fun()
+reslist[["Supp_table_9"]]<- tt03
+
+## Confounders
+
+tt04<- out %>% filter(Analysis %like% "3|4") 
+
+# do N's by exposure
+n0<- tt04 %>% group_by(OutName) %>% summarise(minN= min(N), maxN= max(N)) %>%
+  mutate(Nbracket= paste0("N = ", fmtc(minN), " - ", fmtc(maxN))) %>%
+  select(OutName, Nbracket)
+
+ tx<- tt04 %>%
+  select(ExpName, Outcomes, Comment1, Comment2, PValue) %>%
+  left_join(proc %>% select(Outcomes= Var, OutName= CovName)) %>%
+  select(-Outcomes) %>%
+  gather(key, value, -c(ExpName, OutName)) %>%
+  spread(ExpName, value) %>% left_join(n0)
+
+reslist[["Supp_table_10"]]<- tx
+ 
+write_xlsx(reslist, "03_Analysis_Pairwise_models_1.xlsx")
+```
+

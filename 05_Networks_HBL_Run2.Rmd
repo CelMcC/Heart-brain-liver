@@ -1,0 +1,242 @@
+---
+title: "Multi-organ imaging clarifies the connected subclinical pathology of the heart-brain-liver axis in UK Biobank   | Networks - Run 2"
+
+author: "Celeste McCracken"
+date:   "25 May 2022"
+output: html_notebook
+---
+
+
+### 1. Setup
+```{r}
+## See setup file for packages and functions
+source("00_setup.R")
+
+library(lavaan)
+
+## Output folder
+thisFileFolder<- "/Users/celeste/Documents/HBL_Simplified/R/Sept21/"
+
+## Process document (for labels and metadata)
+proc<-  read_xlsx("../Proc.xlsx")
+
+```
+
+### 2. Main data input
+```{r}
+IP<- readRDS("../Dev Data 1/IP_1.rds"); dim(IP); get_checksum(IP)
+# [1] 502462    269
+# [1] 24733293
+
+SEM<- IP %>% filter(SEM_flag==1) %>% selective_scale(); 
+dim(SEM)
+#6865  269
+```
+
+#------------------
+
+```{r}
+set.seed(2021)
+reslist<- list()
+```
+
+Placed all the variables in together
+Leaving out a heart variable if it is not related to the brain variable in pairwise analysis
+
+### 1a.Grey matter volume (Liver --> Heart)
+
+GFI was not significant in pairwise analysis
+cT1 is not related to AoD in pairwise analysis
+
+```{r}
+modelStringTemplate1a <- 'O_volume_grey_matter_2 ~ a1 * pc_LVSV + a4 * pc_aos + b2 * pc_ct1 +  m001 * age_2  + m002 * sex + m003 * height_2_imp  + m005 * R01_Diabetes_status_2 + m006 * R02_High_cholesterol_status_2 + m007 * R03_Hypertension_status_2 + m008 * smoker_2 + m009 * trans_mets_2_imp + m010 * alcohol_con_2_imp + m011 * deprivation_Townsend_imp + m012 * educ_imp +  m013 * sbp_2_imp + m014 * obese + m015 * bc_TchoL_0_imp + m016 * bc_HbA1c_0_imp + m017 * bc_RBC_0_imp + m018 * cf_head_size_2_imp + m019 * site +  m026 * cf_pos_X_2_imp + m027 * cf_pos_Y_2_imp + m028 * cf_pos_Z_2_imp + m029 * cf_pos_T_2_imp + m030 * cf_date_2_numeric
+
+pc_LVSV ~ c1 * pc_pdff +  c2 * pc_ct1 + m101 * age_2 + m102 * sex + m103 * height_2_imp + m105 * R01_Diabetes_status_2 + m106 * R02_High_cholesterol_status_2 + m107 * R03_Hypertension_status_2 + m108 * smoker_2 + m109 * trans_mets_2_imp + m110 * alcohol_con_2_imp + m111 * deprivation_Townsend_imp + m112 * educ_imp +  m113 * sbp_2_imp + m114 * obese + m115 * bc_TchoL_0_imp + m116 * bc_HbA1c_0_imp + m117 * bc_RBC_0_imp 
+
+
+indirect_pdff_LVSV := (c1 * a1)
+
+indirect_pdff_heart := indirect_pdff_LVSV 
+
+indirect_ct1_LVSV :=  (c2 * a1) 
+
+indirect_ct1_heart := indirect_ct1_LVSV 
+
+total_ct1 := indirect_ct1_heart + b2
+
+'
+
+mdl1a<-   sem(modelStringTemplate1a, data= SEM)
+res1a<-  parameterestimates(mdl1a, standardized = TRUE, rsquare = TRUE) %>% mutate(ID= "1a", N= mdl1a@SampleStats@ntotal)
+
+out1a<- res1a %>%
+   filter(label %like% "a|b|c|d|e|f" | op %in% c(":=", "r2")) %>% mutate(Sig= ifelse(pvalue < 0.05, "*", "")) %>% print() %>%
+   to_clipboard()
+
+```
+### 1b.Grey matter volume (Heart --> Liver)
+```{r}
+modelStringTemplate1b <- 'O_volume_grey_matter_2 ~ a1 * pc_LVSV + a4 * pc_aos + b2 * pc_ct1 +  m001 * age_2  + m002 * sex + m003 * height_2_imp  + m005 * R01_Diabetes_status_2 + m006 * R02_High_cholesterol_status_2 + m007 * R03_Hypertension_status_2 + m008 * smoker_2 + m009 * trans_mets_2_imp + m010 * alcohol_con_2_imp + m011 * deprivation_Townsend_imp + m012 * educ_imp +  m013 * sbp_2_imp + m014 * obese + m015 * bc_TchoL_0_imp + m016 * bc_HbA1c_0_imp + m017 * bc_RBC_0_imp + m018 * cf_head_size_2_imp + m019 * site +  m026 * cf_pos_X_2_imp + m027 * cf_pos_Y_2_imp + m028 * cf_pos_Z_2_imp + m029 * cf_pos_T_2_imp + m030 * cf_date_2_numeric
+
+pc_pdff ~ c1 * pc_LVSV + c2 * pc_GFI + c3 * pc_LVM + c4 * pc_aos + m101 * age_2 + m102 * sex + m103 * height_2_imp + m105 * R01_Diabetes_status_2 + m106 * R02_High_cholesterol_status_2 + m107 * R03_Hypertension_status_2 + m108 * smoker_2 + m109 * trans_mets_2_imp + m110 * alcohol_con_2_imp + m111 * deprivation_Townsend_imp + m112 * educ_imp +  m113 * sbp_2_imp + m114 * obese + m115 * bc_TchoL_0_imp + m116 * bc_HbA1c_0_imp + m117 * bc_RBC_0_imp 
+
+pc_ct1 ~  d3 * pc_LVM + m301 * age_2 + m302 * sex + m303 * height_2_imp + m305 * R01_Diabetes_status_2 + m306 * R02_High_cholesterol_status_2 + m307 * R03_Hypertension_status_2 + m308 * smoker_2 + m309 * trans_mets_2_imp + m310 * alcohol_con_2_imp + m311 * deprivation_Townsend_imp + m312 * educ_imp +  m313 * sbp_2_imp + m314 * obese + m315 * bc_TchoL_0_imp + m316 * bc_HbA1c_0_imp + m317 * bc_RBC_0_imp 
+
+
+indirect_LVM_ct1 :=  (d3 * b2)
+
+total_LVM := indirect_LVM_ct1
+total_aos := a4 
+
+'
+
+mdl1b<-   sem(modelStringTemplate1b, data= SEM)
+res1b<-  parameterestimates(mdl1b, standardized = TRUE, rsquare = TRUE) %>% mutate(ID= "1b", N= mdl1b@SampleStats@ntotal)
+
+out1b<- res1b %>%
+  filter(label %like% "a|b|c|d|e|f" | op %in% c(":=", "r2")) %>% mutate(Sig= ifelse(pvalue < 0.05, "*", "")) %>% print() %>% to_clipboard()
+
+```
+### 2a. WMH (Liver --> Heart)
+WMH related to all heart and liver in pairwise analysis
+
+```{r}
+modelStringTemplate2a <- 'O_volume_WMH_cbrt ~ a2 * pc_GFI + a3 * pc_LVM + a4 * pc_aos + b2 * pc_ct1 +  m001 * age_2  + m002 * sex + m003 * height_2_imp  + m005 * R01_Diabetes_status_2 + m006 * R02_High_cholesterol_status_2 + m007 * R03_Hypertension_status_2 + m008 * smoker_2 + m009 * trans_mets_2_imp + m010 * alcohol_con_2_imp + m011 * deprivation_Townsend_imp + m012 * educ_imp +  m013 * sbp_2_imp + m014 * obese + m015 * bc_TchoL_0_imp + m016 * bc_HbA1c_0_imp + m017 * bc_RBC_0_imp + m018 * cf_head_size_2_imp + m019 * site +  m026 * cf_pos_X_2_imp + m027 * cf_pos_Y_2_imp + m028 * cf_pos_Z_2_imp + m029 * cf_pos_T_2_imp + m030 * cf_date_2_numeric
+
+pc_LVM ~ e1 * pc_pdff +  e2 * pc_ct1 + m301 * age_2 + m302 * sex + m303 * height_2_imp + m305 * R01_Diabetes_status_2 + m306 * R02_High_cholesterol_status_2 + m307 * R03_Hypertension_status_2 + m308 * smoker_2 + m309 * trans_mets_2_imp + m310 * alcohol_con_2_imp + m311 * deprivation_Townsend_imp + m312 * educ_imp +  m313 * sbp_2_imp + m314 * obese + m315 * bc_TchoL_0_imp + m316 * bc_HbA1c_0_imp + m317 * bc_RBC_0_imp 
+
+indirect_pdff_LVM :=  (e1 * a3) 
+
+indirect_pdff_heart := indirect_pdff_LVM  
+
+indirect_ct1_LVM := (e2 * a3) 
+indirect_ct1_heart :=  indirect_ct1_LVM
+
+total_pdff := indirect_pdff_heart
+total_ct1 := indirect_ct1_heart + b2
+'
+
+mdl2a<- sem(modelStringTemplate2a, data= SEM)
+res2a<-   parameterestimates(mdl2a, standardized = TRUE, rsquare= TRUE) %>% mutate(ID= "2a", N= mdl2a@SampleStats@ntotal)
+
+out2a<- res2a %>%
+    filter(label %like% "a|b|c|d|e|f" | op %in% c(":=", "r2")) %>% mutate(Sig= ifelse(pvalue < 0.05, "*", "")) %>% print() %>% to_clipboard()
+
+```
+### 2b. WMH (Heart --> Liver)
+
+```{r}
+modelStringTemplate2b <- 'O_volume_WMH_cbrt ~ a2 * pc_GFI + a3 * pc_LVM + a4 * pc_aos + b2 * pc_ct1 +  m001 * age_2  + m002 * sex + m003 * height_2_imp  + m005 * R01_Diabetes_status_2 + m006 * R02_High_cholesterol_status_2 + m007 * R03_Hypertension_status_2 + m008 * smoker_2 + m009 * trans_mets_2_imp + m010 * alcohol_con_2_imp + m011 * deprivation_Townsend_imp + m012 * educ_imp +  m013 * sbp_2_imp + m014 * obese + m015 * bc_TchoL_0_imp + m016 * bc_HbA1c_0_imp + m017 * bc_RBC_0_imp + m018 * cf_head_size_2_imp + m019 * site +  m026 * cf_pos_X_2_imp + m027 * cf_pos_Y_2_imp + m028 * cf_pos_Z_2_imp + m029 * cf_pos_T_2_imp + m030 * cf_date_2_numeric
+
+pc_ct1 ~ d3 * pc_LVM + m301 * age_2 + m302 * sex + m303 * height_2_imp + m305 * R01_Diabetes_status_2 + m306 * R02_High_cholesterol_status_2 + m307 * R03_Hypertension_status_2 + m308 * smoker_2 + m309 * trans_mets_2_imp + m310 * alcohol_con_2_imp + m311 * deprivation_Townsend_imp + m312 * educ_imp +  m313 * sbp_2_imp + m314 * obese + m315 * bc_TchoL_0_imp + m316 * bc_HbA1c_0_imp + m317 * bc_RBC_0_imp 
+
+indirect_LVM_ct1 :=  (d3 * b2)
+
+'
+
+mdl2b<- sem(modelStringTemplate2b, data= SEM)
+res2b<-   parameterestimates(mdl2b, standardized = TRUE, rsquare= TRUE) %>% mutate(ID= "2b", N= mdl2b@SampleStats@ntotal)
+
+out2b<- res2b %>%
+    filter(label %like% "a|b|c|d|e|f" | op %in% c(":=", "r2")) %>% mutate(Sig= ifelse(pvalue < 0.05, "*", "")) %>% print() %>% to_clipboard()
+```
+
+
+### 3a. ICVF (Liver --> Heart)
+LVSV not related to ICVF in pairwise analyses
+```{r}
+modelStringTemplate3a <- 'ICVF ~  a2 * pc_GFI +  a3 * pc_LVM + a4 * pc_aos + b1 * pc_pdff + b2 * pc_ct1 +  m001 * age_2  + m002 * sex + m003 * height_2_imp  + m005 * R01_Diabetes_status_2 + m006 * R02_High_cholesterol_status_2 + m007 * R03_Hypertension_status_2 + m008 * smoker_2 + m009 * trans_mets_2_imp + m010 * alcohol_con_2_imp + m011 * deprivation_Townsend_imp + m012 * educ_imp +  m013 * sbp_2_imp + m014 * obese + m015 * bc_TchoL_0_imp + m016 * bc_HbA1c_0_imp + m017 * bc_RBC_0_imp + m018 * cf_head_size_2_imp + m019 * site +  m026 * cf_pos_X_2_imp + m027 * cf_pos_Y_2_imp + m028 * cf_pos_Z_2_imp + m029 * cf_pos_T_2_imp + m030 * cf_date_2_numeric
+
+pc_LVM ~ e1 * pc_pdff +  e2 * pc_ct1 + m301 * age_2 + m302 * sex + m303 * height_2_imp + m305 * R01_Diabetes_status_2 + m306 * R02_High_cholesterol_status_2 + m307 * R03_Hypertension_status_2 + m308 * smoker_2 + m309 * trans_mets_2_imp + m310 * alcohol_con_2_imp + m311 * deprivation_Townsend_imp + m312 * educ_imp +  m313 * sbp_2_imp + m314 * obese + m315 * bc_TchoL_0_imp + m316 * bc_HbA1c_0_imp + m317 * bc_RBC_0_imp 
+
+indirect_pdff_LVM :=  (e1 * a3) 
+
+indirect_pdff_heart :=   indirect_pdff_LVM  
+
+indirect_ct1_LVM := (e2 * a3) 
+indirect_ct1_heart :=  indirect_ct1_LVM
+
+total_pdff := indirect_pdff_heart + b1
+total_ct1 := indirect_ct1_heart + b2
+'
+
+mdl3a<- sem(modelStringTemplate3a, data= SEM)
+res3a<-   parameterestimates(mdl3a, standardized = TRUE, rsquare= TRUE) %>% mutate(ID= "3a", N= mdl3a@SampleStats@ntotal)
+out3a<- res3a %>%
+    filter(label %like% "a|b|c|d|e|f" | op %in% c(":=", "r2")) %>% mutate(Sig= ifelse(pvalue < 0.05, "*", "")) %>% print() %>% to_clipboard()
+
+```
+
+### 3b. ICVF (Heart --> Liver)
+```{r}
+modelStringTemplate3b <- 'ICVF ~  + a2 * pc_GFI + a3 * pc_LVM + a4 * pc_aos + b1 * pc_pdff + b2 * pc_ct1 +  m001 * age_2  + m002 * sex + m003 * height_2_imp  + m005 * R01_Diabetes_status_2 + m006 * R02_High_cholesterol_status_2 + m007 * R03_Hypertension_status_2 + m008 * smoker_2 + m009 * trans_mets_2_imp + m010 * alcohol_con_2_imp + m011 * deprivation_Townsend_imp + m012 * educ_imp +  m013 * sbp_2_imp + m014 * obese + m015 * bc_TchoL_0_imp + m016 * bc_HbA1c_0_imp + m017 * bc_RBC_0_imp + m018 * cf_head_size_2_imp + m019 * site +  m026 * cf_pos_X_2_imp + m027 * cf_pos_Y_2_imp + m028 * cf_pos_Z_2_imp + m029 * cf_pos_T_2_imp + m030 * cf_date_2_numeric
+
+pc_pdff ~ c1 * pc_LVSV + c2 * pc_GFI + c3 * pc_LVM + c4 * pc_aos + m101 * age_2 + m102 * sex + m103 * height_2_imp + m105 * R01_Diabetes_status_2 + m106 * R02_High_cholesterol_status_2 + m107 * R03_Hypertension_status_2 + m108 * smoker_2 + m109 * trans_mets_2_imp + m110 * alcohol_con_2_imp + m111 * deprivation_Townsend_imp + m112 * educ_imp +  m113 * sbp_2_imp + m114 * obese + m115 * bc_TchoL_0_imp + m116 * bc_HbA1c_0_imp + m117 * bc_RBC_0_imp 
+
+pc_ct1 ~ d3 * pc_LVM +  m301 * age_2 + m302 * sex + m303 * height_2_imp + m305 * R01_Diabetes_status_2 + m306 * R02_High_cholesterol_status_2 + m307 * R03_Hypertension_status_2 + m308 * smoker_2 + m309 * trans_mets_2_imp + m310 * alcohol_con_2_imp + m311 * deprivation_Townsend_imp + m312 * educ_imp +  m313 * sbp_2_imp + m314 * obese + m315 * bc_TchoL_0_imp + m316 * bc_HbA1c_0_imp + m317 * bc_RBC_0_imp 
+
+indirect_LVSV_pdff := (c1 * b1)
+
+indirect_GFI_pdff := (c2 * b1)
+
+indirect_LVM_pdff :=  (c3 * b1) 
+indirect_LVM_ct1 :=  (d3 * b2)
+
+indirect_aos_pdff :=  (c4 * b1)
+
+total_LVSV := indirect_LVSV_pdff 
+total_GFI := a2 + indirect_GFI_pdff 
+total_LVM := a3 + indirect_LVM_pdff + indirect_LVM_ct1
+total_aos := a4 + indirect_aos_pdff 
+'
+
+mdl3b<- sem(modelStringTemplate3b, data= SEM)
+res3b<-   parameterestimates(mdl3b, standardized = TRUE, rsquare= TRUE) %>% mutate(ID= "3b", N= mdl3b@SampleStats@ntotal)
+out3b<- res3b %>%
+    filter(label %like% "a|b|c|d|e|f" | op %in% c(":=", "r2")) %>% mutate(Sig= ifelse(pvalue < 0.05, "*", "")) %>% print() %>% to_clipboard()
+```
+
+### 4a. ISOVF (Liver --> Heart)
+LVSV is not related to ISOVF in pairwise analyses
+```{r}
+modelStringTemplate4a <- 'ISOVF ~ a4 * pc_aos + b2 * pc_ct1 +  m001 * age_2  + m002 * sex + m003 * height_2_imp  + m005 * R01_Diabetes_status_2 + m006 * R02_High_cholesterol_status_2 + m007 * R03_Hypertension_status_2 + m008 * smoker_2 + m009 * trans_mets_2_imp + m010 * alcohol_con_2_imp + m011 * deprivation_Townsend_imp + m012 * educ_imp +  m013 * sbp_2_imp + m014 * obese + m015 * bc_TchoL_0_imp + m016 * bc_HbA1c_0_imp + m017 * bc_RBC_0_imp + m018 * cf_head_size_2_imp + m019 * site +  m026 * cf_pos_X_2_imp + m027 * cf_pos_Y_2_imp + m028 * cf_pos_Z_2_imp + m029 * cf_pos_T_2_imp + m030 * cf_date_2_numeric
+
+'
+
+mdl4a<- sem(modelStringTemplate4a, data= SEM)
+res4a<-   parameterestimates(mdl4a, standardized = TRUE, rsquare= TRUE) %>% mutate(ID= "4a", N= mdl4a@SampleStats@ntotal)
+out4a<- res4a %>%
+    filter(label %like% "a|b|c|d|e|f" | op %in% c(":=", "r2")) %>% mutate(Sig= ifelse(pvalue < 0.05, "*", "")) %>% print() %>% to_clipboard()
+
+```
+
+### 4b. ISOVF (Heart --> Liver)
+```{r}
+modelStringTemplate4b <- 'ISOVF ~   a4 * pc_aos  + b2 * pc_ct1 +  m001 * age_2  + m002 * sex + m003 * height_2_imp  + m005 * R01_Diabetes_status_2 + m006 * R02_High_cholesterol_status_2 + m007 * R03_Hypertension_status_2 + m008 * smoker_2 + m009 * trans_mets_2_imp + m010 * alcohol_con_2_imp + m011 * deprivation_Townsend_imp + m012 * educ_imp +  m013 * sbp_2_imp + m014 * obese + m015 * bc_TchoL_0_imp + m016 * bc_HbA1c_0_imp + m017 * bc_RBC_0_imp + m018 * cf_head_size_2_imp + m019 * site +  m026 * cf_pos_X_2_imp + m027 * cf_pos_Y_2_imp + m028 * cf_pos_Z_2_imp + m029 * cf_pos_T_2_imp + m030 * cf_date_2_numeric
+
+pc_ct1 ~ d3 * pc_LVM +  m301 * age_2 + m302 * sex + m303 * height_2_imp + m305 * R01_Diabetes_status_2 + m306 * R02_High_cholesterol_status_2 + m307 * R03_Hypertension_status_2 + m308 * smoker_2 + m309 * trans_mets_2_imp + m310 * alcohol_con_2_imp + m311 * deprivation_Townsend_imp + m312 * educ_imp +  m313 * sbp_2_imp + m314 * obese + m315 * bc_TchoL_0_imp + m316 * bc_HbA1c_0_imp + m317 * bc_RBC_0_imp 
+
+indirect_LVM_ct1 :=  (d3 * b2)
+'
+
+mdl4b<- sem(modelStringTemplate4b, data= SEM)
+res4b<-   parameterestimates(mdl4b, standardized = TRUE, rsquare= TRUE) %>% mutate(ID= "4b", N= mdl4b@SampleStats@ntotal)
+out4b<- res4b %>%
+    filter(label %like% "a|b|c|d|e|f" | op %in% c(":=", "r2")) %>% mutate(Sig= ifelse(pvalue < 0.05, "*", "")) %>% print() %>% to_clipboard()
+```
+
+
+### Output
+```{r}
+models<- list(mdl1a, mdl1b, mdl2a, mdl2b, mdl3a, mdl3b, mdl4a, mdl4b)
+
+saveRDS(models, "Networks_HBL_run2.rds")
+
+outputs<- bind_rows(out1a, out1b, out2a, out2b, out3a, out3b, out4a, out4b)
+write_xlsx(outputs, "Networks_HBL_run2.xlsx")
+```
+
+
+
+
+

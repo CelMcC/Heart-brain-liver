@@ -1,0 +1,395 @@
+---
+title: "Multi-organ imaging clarifies the connected subclinical pathology of the heart-brain-liver axis in UK Biobank   | Enrich Data script"
+
+author: "Celeste McCracken"
+date:   "25 May 2022"
+output: html_notebook
+---
+
+
+### Setup
+```{r}
+source("00_setup.R")
+
+proc<- read_xlsx("../Proc.xlsx")
+```
+
+
+### Main data input
+```{r}
+IP<- readRDS("../Dev Data 1/IP_0.rds"); dim(IP); get_checksum(IP)
+# [1] 502462    236
+# [1] 97427.62
+
+```
+
+#---------------
+### 0. Simple adjustments
+```{r}
+
+
+IP$obese<- ifelse(IP$bmi_2_imp >= 30, 1, 0); table(IP$obese)
+#     0     1 
+# 39879  9117 
+
+IP$NAFLD<- ifelse(IP$pdff >= 5, 1, 0); table(IP$NAFLD)
+#    0     1 
+# 11864  3623
+
+IP$age_sq<-    IP$age_2^2
+IP$cf_age_sq<- IP$cf_age_2^2
+
+## Binary form of site
+
+HBL<- IP$cardiac_flag & IP$brain_imaging_flag & IP$liver_flag
+
+table(HBL, IP$cf_UKB_site_name_2)
+# HBL     Cheadle (imaging) Bristol (imaging) Newcastle (imaging) Reading (imaging)
+#   FALSE             13714                 0                8018              5111
+#   TRUE              11755                 0                2069                 0
+
+IP$site<-  ifelse(IP$cf_UKB_site_name_2 %like% "Cheadle", 1, 0)
+table(IP$site)
+
+
+smoking<- readRDS("~/Documents/UKB Test Space/R/smoking.rds")
+
+IP<- left_join(IP, smoking %>% select(f.eid, smoking_cat_2))
+```
+
+
+### 1. CMR Indexing and ratios
+
+```{r}
+
+# Indexed LVSV
+IP$cmr_LVSV_i<-  IP$cmr_LVSV / IP$bsa_2_imp
+plot(IP$cmr_LVSV, IP$cmr_LVSV_i)
+
+### LV Mass-to-volume ratio
+IP$cmr_LVM_LVEDV<- IP$cmr_LVM/IP$cmr_LVEDV
+hist(IP$cmr_LVM_LVEDV)
+
+## cmr_GFI
+cavity_size<- (IP$cmr_LVEDV + IP$cmr_LVESV)/2
+GV<-          with(IP, cavity_size + (cmr_LVM/1.05))
+
+IP$cmr_GFI<- with(IP, cmr_LVSV/GV)
+mean(IP$cmr_GFI, na.rm=TRUE) # 0.4756326
+
+```
+
+
+### 2. Average cognitive function
+
+```{r}
+
+
+cogfields<- c("cog_FI_2", "cog_prosMemory_2", "cog_RT_2", 
+             "trans_cog_RT_2", 
+             "cog_FI_2_imp", "cog_prosMemory_2_imp", "trans_cog_RT_2_imp", 
+             "cog_FI_2_is_imp", "cog_prosMemory_2_is_imp", "trans_cog_RT_2_is_imp")
+
+## Check that the negative ones have been reflected
+plot(IP$cog_RT_2, IP$trans_cog_RT_2_imp)
+
+cog_standard<-  c("cog_FI_2_imp", "cog_prosMemory_2_imp", "trans_cog_RT_2_imp")
+
+cor(IP[, cog_standard], use= "pairwise.complete.obs")
+#                      cog_FI_2_imp cog_prosMemory_2_imp trans_cog_RT_2_imp
+# cog_FI_2_imp            1.0000000            0.2273477          0.1702348
+# cog_prosMemory_2_imp    0.2273477            1.0000000          0.1175638
+# trans_cog_RT_2_imp      0.1702348            0.1175638          1.0000000
+
+X<- IP %>% filter(imaging== TRUE, cognition_flag== 1) %>% .[, c("f.eid", cog_standard)]
+
+skim(X)
+X[,-1]<- scale(X[,-1])
+
+jb<- tibble(f.eid= X$f.eid, cog_standard_4= rowMeans(X[,-1]))
+
+hist(jb$cog_standard_4); skim(jb$cog_standard_4)
+#   skim_variable n_missing complete_rate      mean    sd    p0    p25    p50   p75  p100 hist 
+# 1 data                  0             1 -1.57e-17 0.669 -3.02 -0.381 0.0786 0.459  5.19 ▁▇▅▁▁
+
+
+IP<- left_join(IP, jb) 
+
+```
+
+### 4. Set Counts 1 
+```{r}
+
+table(IP$imaging)
+#  FALSE   TRUE 
+# 453462  48998 
+
+
+table(IP$imaging, IP$Exclusion_criterion)
+
+  #       0.Include 1.Missing critical covariates
+  # FALSE    450460                          3028
+  # TRUE      48999                             2
+
+IP$remaining<- IP$imaging & IP$Exclusion_criterion %like% "0"
+
+table(IP$remaining)
+# FALSE   TRUE 
+# 453466  48996
+```
+
+
+### 6. Set Counts 2 - Heart set and liver set
+```{r}
+
+table(IP$remaining)
+# 48996
+
+##  Heart  -------------------------------------------
+
+temp<- IP[IP$remaining== TRUE, c("f.eid", "PDA_AoD", "cmr_LVSV_i", "cmr_LVM_LVEDV", "cmr_GFI")]
+
+flag<- at_least_one_flag(temp)
+table(flag)
+# flag
+# FALSE  TRUE 
+# 16587 32409 
+
+temp<- temp %>% filter(flag==TRUE) %>% select(f.eid) %>% mutate(heart_flag= 1)
+
+IP<- IP %>% select(-any_of("heart_flag")) %>%
+            left_join(temp) %>% 
+             mutate(heart_flag= fixNAs(heart_flag)); sum(IP$heart_flag) #  32409
+
+### Liver -------------------------------------------
+
+
+temp<- IP[IP$remaining== TRUE, c("f.eid", "ct1", "pdff", "iron")]
+mySkim(temp)
+flag<- at_least_one_flag(temp)
+table(flag)
+# flag
+# FALSE  TRUE 
+# 33473 15523 
+
+temp<- temp %>% filter(flag==TRUE) %>% select(f.eid) %>% mutate(liver_flag= 1)
+
+IP<- IP %>% select(-any_of("liver_flag")) %>%
+  left_join(temp) %>% mutate(liver_flag= fixNAs(liver_flag)); sum(IP$liver_flag) # 15523
+
+# FALSE  TRUE 
+# 33473 15523 
+```
+
+### 7. Set Counts 3 - HL and brain union sets
+```{r}
+### Union of brain imaging sets
+IP$any_brain<- fixNAs(IP$brain_imaging_flag)
+table(IP$remaining, IP$any_brain)
+  #            0      1
+  # FALSE 453465      1
+  # TRUE    5460  43536
+
+### Union of heart and liver
+IP$liver_or_heart<- pmax(fixNAs(IP$liver_flag), fixNAs(IP$heart_flag))
+table(IP$remaining, IP$liver_or_heart) # 32757
+
+IP$liver_and_heart<- IP$liver_flag & IP$heart_flag
+sum(IP$liver_and_heart) # 15175
+
+table(IP$liver_and_heart, IP$liver_or_heart)
+
+IP$intersection_set<- IP$remaining & ((IP$any_brain & IP$liver_or_heart) | IP$liver_and_heart )
+table(IP$intersection_set)
+#  FALSE   TRUE 
+# 471054  31408 
+
+```
+
+### 8. Set Counts 4 - Non-missing covariates
+```{r}
+
+table(IP$intersection_set)
+#  FALSE   TRUE 
+# 471054  31408 
+
+covs<- c("age_2", "sex",  "height_2_imp", "R01_Diabetes_status_2", "R02_High_cholesterol_status_2", "R03_Hypertension_status_2", 
+         "smoker_2", "mets_2_imp", "alcohol_con_2_imp", "deprivation_Townsend_imp", "educ_imp", "sbp_2_imp", "obese",
+         "bc_TchoL_0_imp", "bc_HbA1c_0_imp", "bc_RBC_0_imp")
+
+IP$full_covariates<- apply(IP[,covs], 1, function(x) all(!is.na(x)))
+
+table( IP$intersection_set, IP$full_covariates)
+  #        FALSE   TRUE
+  # FALSE 453732  17556
+  # TRUE     730  30444
+
+
+
+### There are 730 rows with missing biochemistry (2.3%)
+
+
+IP$maximum_set<- IP$intersection_set & IP$full_covariates; table(IP$maximum_set)
+#  FALSE   TRUE 
+# 472018  30444
+
+modvars<-   c( "cmr_LVSV_i", "cmr_LVM_LVEDV", "cmr_GFI", "PDA_AoD",
+               "O_volume_grey_matter_2",   "O_volume_WMH_cbrt", "ICVF", "ISOVF",
+               "ct1", "pdff") 
+
+mid<- IP[IP$maximum_set, c("f.eid", modvars)]
+N<- nrow(mid)
+
+sk<- skim(mid) %>% mutate(non_missing_count= (N- n_missing)) %>% select(skim_variable, non_missing_count)
+
+present<- apply(mid, 1, function(x) !any(is.na(x)))
+table(present)
+# FALSE  TRUE 
+# 23579  6865 
+
+SEM<- mid %>% filter(present)
+
+## Liver subset
+
+IP$liver_subset<- IP$maximum_set & IP$liver_flag
+ 
+sum(IP$liver_subset) # 15097
+
+# Checks
+IP$full_covariates<- apply(IP[,covs], 1, function(x) all(!is.na(x)))
+table(IP$liver_subset, IP$full_covariates)  
+  #        FALSE   TRUE
+  # FALSE 454462  32903
+  # TRUE       0  15097
+
+
+IP$SEM_flag<- ifelse(IP$f.eid %in% SEM$f.eid, 1, 0)
+sum(IP$SEM_flag)
+
+```
+
+
+### 9. Check for skew
+```{r}
+
+myModelVars<- proc %>% filter(Check=="yes") %>% pull(Var) %>% print()
+
+skewTestSet<- IP %>% filter(maximum_set==1)
+
+source('~/Documents/UKB Test Space/R/0_transform_for_skew.R')
+```
+### 8. Deskew
+```{r}
+
+#bc_HbA1c_0_imp is already OK
+
+IP<- IP %>% mutate( log_PDA_AoD = trans_log(PDA_AoD),
+                    log_pdff =   trans_log(pdff),
+                    trans_iron = trans_inverse(iron))
+
+to_clipboard(names(IP))
+```
+### 9. Liver cT1 categories
+```{r}
+mid<- IP %>% filter(maximum_set== TRUE)
+hist(mid$ct1)
+mid$ct1_750<- as.numeric(mid$ct1 >= 750)
+mid$ct1_800<- as.numeric(mid$ct1 >= 800)
+prop.table(table(mid$ct1_750))
+prop.table(table(mid$ct1_800))
+
+#         0         1 
+# 0.8404876 0.1595124 
+
+
+IP$ct1_750 <- as.numeric(IP$ct1 >= 750)
+```
+
+### 10. Liver iron categories
+```{r}
+hist(IP$iron)
+skim(IP$iron)
+
+prop.table(table(IP$iron < 1.075 ))
+Qs<- quantile(IP$iron, probs = c(0.10, 0.90), na.rm=TRUE) %>% print()
+#      10%      90% 
+# 1.061159 1.552446 
+
+IP$iron_cat<- case_when(IP$iron >= Qs[2] ~ "2. Iron highest 10%",
+                        IP$iron < Qs[1] ~ "1. Iron lowest 10%",
+                        is.na(IP$iron) ~ NA_character_, 
+                        TRUE ~ "0. Iron middle 80%")
+### Checks
+table(IP$iron_cat)
+boxplot(IP$iron ~ IP$iron_cat)
+
+```
+### 11. Reversed CMR
+
+```{r}
+IP$aos<-      IP$log_PDA_AoD * -1
+IP$red_GFI<-  IP$cmr_GFI * -1
+IP$red_LVSV<- IP$cmr_LVSV_i * -1
+
+```
+
+
+### 12. Orthogonalized Liver (Supp Table 4 first part)
+```{r}
+
+cmat<-        IP %>% 
+              filter(maximum_set) %>% .[,c("f.eid", "trans_iron", "log_pdff", "ct1")] %>% filter(complete.cases(.))
+cmat[-1]<- scale(cmat[,-1])
+
+nrow(cmat) # 11452
+
+pc1<-         psych::principal(cmat[,-1], nfactors = 3); pc1
+
+scores<-      pc1$scores %>% data.frame() %>% 
+                rename(pc_iron= RC2,
+                       pc_pdff= RC1, 
+                       pc_ct1=  RC3) %>%
+                mutate(f.eid= cmat$f.eid)
+
+IP<- left_join(IP, scores)
+
+### Checks
+plot(IP$log_pdff, IP$pc_pdff);   cor(IP$log_pdff, IP$pc_pdff, use= "pairwise.complete.obs") # 0.9328983
+plot(IP$ct1, IP$pc_ct1);         cor(IP$ct1, IP$pc_ct1, use= "pairwise.complete.obs") # 0.9438352
+plot(IP$trans_iron, IP$pc_iron); cor(IP$trans_iron, IP$pc_iron, use= "pairwise.complete.obs") # 0.9907269
+```
+
+### 13. Orthogonalized CMR (Supp Table 4 second part)
+```{r}
+cmat<-    IP %>%
+  filter(maximum_set) %>% .[, c("f.eid", "red_LVSV", "cmr_LVM_LVEDV", "red_GFI", "aos")] %>% 
+  filter(complete.cases(.))
+cmat[-1]<- scale(cmat[,-1])
+
+nrow(cmat) # 22798
+
+pc1<-     psych::principal(cmat[,-1], nfactors = 4); pc1
+scores<-  pc1$scores %>% data.frame() %>% 
+              rename(pc_GFI=   RC4, 
+                     pc_aos=   RC2, 
+                     pc_LVSV=  RC3, 
+                     pc_LVM=   RC1) %>%
+              mutate(f.eid= cmat$f.eid)
+
+IP<- left_join(IP, scores)
+
+# Checks
+plot(IP$red_LVSV, IP$pc_LVSV);     cor(IP$red_LVSV, IP$pc_LVSV, use= "pairwise.complete.obs") # 0.960558
+plot(IP$aos, IP$pc_aos);           cor(IP$aos, IP$pc_aos, use= "pairwise.complete.obs") # 0.9927214
+plot(IP$cmr_LVM_LVEDV, IP$pc_LVM); cor(IP$cmr_LVM_LVEDV, IP$pc_LVM, use= "pairwise.complete.obs") #  0.9542762
+plot(IP$red_GFI, IP$pc_GFI);       cor(IP$red_GFI, IP$pc_GFI, use= "pairwise.complete.obs") # 0.9426921
+```
+#--------------------------------------
+### Save
+```{r}
+saveRDS(IP, "../Dev Data 1/IP_1.rds")
+dim(IP); get_checksum(IP)
+# [1] 502462    269
+# [1] 24733293
+```
+

@@ -1,0 +1,421 @@
+---
+title: "Multi-organ imaging clarifies the connected subclinical pathology of the heart-brain-liver axis in UK Biobank   | Descriptive tables"
+
+author: "Celeste McCracken"
+date:   "25 May 2022"
+output: html_notebook
+---
+
+### 1. Setup
+```{r}
+source("0_setup.R")
+standardSource<- "~/Documents/UKB Test Space/Standard_data/"
+
+heart_color<- "#ffe5ec"
+liver_color<- "#fff2e6"
+
+fmtc<- function(x){
+  out<- format(x, big.mark= ",", digits= 0, format= "f")
+}
+
+proc<- read_xlsx("../Proc.xlsx", sheet= "Descriptives")
+
+```
+
+
+### 2. Process documents
+```{r}
+
+infile<- "../HBL_Simplified_Process_Doc3.xlsx"
+
+proc<- read_xlsx(infile, sheet= "Main_copy") %>% filter(Describe== "yes") %>%
+  arrange(Set, Order) %>%
+  mutate(CovName= paste0(Set, padded(Order,2), "_", CovName)) %>%
+  select(-Set)
+
+
+
+```
+
+### 2. Main data input
+```{r}
+IP<- readRDS("../Dev Data 1/IP_1.rds"); dim(IP); get_checksum(IP)
+# [1] 502462    269
+# [1] 24733293
+
+# Move decimal for display
+
+IP$cmr_GFI<-        IP$cmr_GFI * 100
+IP$O_volume_WMH_2<- IP$O_volume_WMH_2/1000
+```
+
+### 3. Filter to main study set
+```{r}
+mid<- IP %>%
+  filter(maximum_set==TRUE)
+dim(mid) #30444   269
+```
+#-------------------
+
+```{r}
+reslist<- list()
+```
+
+### 1. Categories for display
+```{r}
+
+mid$sex_fac<- ifelse(mid$sex==0, "Women", "Men")
+
+mid$mets_cat<- case_when(mid$mets_2 < 600 ~ "2.Inactive (<600)",
+                        mid$mets_2 >= 3000 ~ "0.Highly active (>3,000)",
+                        is.na(mid$mets_2) ~ "X.Missing",
+                        TRUE ~ "1. Moderately active (600-2,999)")
+
+prop.table(table(mid$mets_cat))
+
+        # 0.Highly active (>3,000) 1. Moderately active (600-2,999)                2.Inactive (<600) 
+        #              0.316482722                      0.510806727                      0.164498752 
+        #                X.Missing 
+        #              0.008211799 
+
+
+# TPA total physical activity questionnaire, MET metabolic equivalent of task
+# See https://bmcmedicine.biomedcentral.com/articles/10.1186/s12916-019-1339-0/tables/1  for example
+
+mid$obese_2<- case_when(mid$bmi_2_imp < 25 ~ "0. Healthy weight (<25)",
+                        mid$bmi_2_imp > 30 ~ "2. Obese (> 30)",
+                        TRUE ~ "1. Overweight (25-29.9)")
+
+table(mid$obese_2)
+# 0. Healthy weight (<25) 1. Overweight (25-29.9)         2. Obese (> 30) 
+#                   12791                   12962                    5655 
+
+prop.table(table(mid$obese_2))
+# 0. Healthy weight (<25) 1. Overweight (25-29.9)         2. Obese (> 30) 
+#               0.4072529               0.4126974               0.1800497
+              
+liver_subset<- mid %>% filter(liver_flag==1) 
+ 
+dim(liver_subset) # 15503   290
+
+max(mid$date_2, na.rm=TRUE) # "2019-03-07"
+min(mid$date_2, na.rm=TRUE) # "2014-05-02"
+
+mid$standard_cognition_flag<- as.numeric(!is.na(mid$cog_standard_4))
+table(mid$standard_cognition_flag)
+ #   0     1 
+ # 2172 28272
+
+table(mid$educ_fac)
+mid$educ_cat<- ifelse(mid$educ_fac %like% "6|7", 1, 0)
+prop.table(table(mid$educ_cat))
+
+#         0         1 
+#  0.2711093 0.7288907
+
+## Interpretation = Post-secondary qualification
+
+table(mid$alcohol_2)
+
+mid$alcohol_cat<- case_when(mid$alcohol_2 %like% "1|2|3" ~ "2. At least once per week",
+                            mid$alcohol_2 %like% "6" ~ "0. Never",
+                            is.na(mid$alcohol_2) ~ "(Missing)",
+                            TRUE ~ "1. Less than once per week")
+
+prop.table(table(mid$alcohol_cat))
+
+
+table(mid$smoking_cat_2, mid$smoker_2)
+mid$smoker_status_2<- ifelse(mid$smoking_cat_2 > 2, 3, mid$smoking_cat_2)
+
+mid$smoker_status_2<- ordered(mid$smoker_status_2, levels= c(1, 2, 3),
+                              labels= c("0.Never smoked", "1.Previous smoker", "2.Current smoker"))
+table(mid$smoker_status_2) 
+
+   # 0.Never smoked 1.Previous smoker  2.Current smoker 
+   #          18962             10160              1095 
+
+table(mid$smoker_status_2) %>% prop.table()
+
+   # 0.Never smoked 1.Previous smoker  2.Current smoker 
+   #     0.62752755        0.33623457        0.03623788 
+```
+
+### 2. Flowcounts prep
+```{r}
+s0<- IP %>% filter(imaging,  Exclusion_criterion %like% "0"); dim(s0) # 48996
+s0$brain_imaging_flag<- fixNAs(s0$brain_imaging_flag)
+
+sum(s0$heart_flag) # 32409
+sum(s0$liver_flag) # 15523
+sum(s0$brain_imaging_flag) # 39691
+
+sum(s0$maximum_set) # 30444
+
+temp<- IP %>% filter(maximum_set==TRUE)
+SEM<-  IP %>% filter(SEM_flag==1)
+```
+
+
+```{r}
+flowcounts1<- tribble(~Label, ~Count,
+             "Total sample",       nrow(IP),
+             "Imaging attendance", sum(nrow(s0), na.rm=TRUE),
+             
+             "Liver imaging",      sum(s0$liver_flag, na.rm=TRUE),
+             "Cardiac imaging",    sum(s0$heart_flag, na.rm=TRUE),
+             "Brain imaging",      sum(s0$brain_imaging_flag, na.rm=TRUE),
+ 
+             "Either liver or heart imaging", sum(s0$liver_flag | s0$heart_flag, na.rm = TRUE),
+
+              "Maximal intersection of heart, brain and liver\n(Rows with any non-missing value across study variables)", sum(s0$intersection_set),
+             "Rows removed due\nto missing covariates",           sum(s0$intersection_set & !s0$maximum_set),
+             "Main data set\n(Heart-brain pairwise analyses)",    sum(IP$maximum_set),
+             "Liver subset\n(Liver-brain, heart-liver analyses)", sum(s0$liver_subset),
+             "Three-organ subset\n(complete rows across all organ variables)", nrow(SEM)
+             ) %>% 
+  mutate(ID= row_number(),
+         N= paste0( Label,asN(Count))) %>% 
+  select(ID, everything()) %>% print()
+
+reslist[["1. Flowcounts - Liver"]]<- flowcounts1
+```
+```{r}
+myBlue<-   "#3f6ea6"
+myPurple<- "#6246a0"
+myGreen<-  "#518132"
+
+others<- c("green4", myPurple, "dodgerblue3","grey20")
+```
+
+
+### 3. Flowchart 
+
+```{r}
+g<- DiagrammeR::grViz(" digraph G {
+
+	graph[ratio=fill,center=1, layout= 'neato'];
+	node[fontname = 'Avenir', fontsize= 12,  shape = rectangle, style= filled, color= '#0D8B8D33', fillcolor= '#0D8B8D33', width= 1.5];
+	edge[arrowhead = open, arrowsize= 0.7, penwidth= 1, color= '#bfbfbf']
+	 
+
+
+    subgraph middle {
+    rank= same;
+    tab3 [label = '@@3', pos= '-2, 4!'];
+    tab4 [label = '@@4', pos= '0, 4!'];
+    tab5 [label = '@@5', pos= '2, 4!'];
+
+    }
+     
+    tab2 -> tab3
+    tab2 -> tab4
+    tab2 -> tab5
+    
+     tab6 [label = '@@6', width = 3, pos= '-1, 3!'];
+    
+    tab3 -> tab6
+    tab4 -> tab6
+    
+    subgraph spine {
+    
+    tab1 [label = '@@1', width= 2.5, pos= '0, 6!'];
+    tab2 [label = '@@2', width= 2.5, pos= '0, 5!'];
+    tab1 -> tab2
+
+	 
+	  tab7 [label = '@@7', width= 5,  pos= '0, 1.9!'];
+	  tab8 [label = '@@8', width= 2, pos= '2, 1!'];
+	  
+	  tab9 [label = '@@9', width= 3, pos= '0, 0!', fillcolor= 'grey90', color= 'grey90'];
+	  tab10 [label = '@@10', width= 3, pos= '0, -1!', fillcolor= 'grey90', color= 'grey90'];
+	  tab11 [label = '@@11', width= 3.5, pos= '0, -2!', fillcolor= 'grey90', color= 'grey90']
+	  
+	  tab5 -> tab7
+	  tab6 -> tab7
+	  mar1 [height= 0, width= 0, shape= 'diamond', pos= '0, 1!', label= '']
+	  tab7 -> mar1 [arrowhead= none]
+	  mar1 -> tab9 
+	  mar1 -> tab8
+	  tab9 -> tab10
+	  tab10 -> tab11
+    }
+
+}
+      [1]: flowcounts1$N[1]
+      [2]: flowcounts1$N[2]
+      [3]: flowcounts1$N[3]
+      [4]: flowcounts1$N[4]
+      [5]: flowcounts1$N[5]
+      [6]: flowcounts1$N[6]
+      [7]: flowcounts1$N[7]
+      [8]: flowcounts1$N[8]
+      [9]: flowcounts1$N[9]
+      [10]: flowcounts1$N[10]
+      [11]: flowcounts1$N[11]
+   
+	")
+
+print(g)
+g %>% DiagrammeRsvg::export_svg() %>% charToRaw() %>% rsvg::rsvg_png("HBL_flowchart.png", width= 1000)
+```
+
+## 4. Descriptives (Table 1)
+```{r}
+myVars<- proc %>% filter(Describe %like% "yes") %>% pull(Var) %>% print()
+
+```
+
+
+```{r}
+two_dp<- "%3.2f"
+one_dp<- "%3.1f"
+
+s1<- mid %>% mutate(Set= "0.Whole set")
+s2<- mid %>% filter(liver_subset ==1) %>% mutate(Set= "1.Liver")
+s3<- mid %>% filter(SEM_flag ==1) %>% mutate(Set= "2.SEM")
+
+## Temporary augmented set
+sett<- bind_rows(s1, s2, s3) %>% 
+  select(Set, all_of(myVars))
+table(sett$Set)
+
+
+base0<- sett %>% gather(Var, value, -c(Set)) %>% 
+  left_join(proc) %>%
+  mutate(number= ifelse(Type== "numeric", suppressWarnings(as.numeric(value)), NA_real_))
+
+## Identified skewed numeric variables
+tskew<- base0 %>% filter(Set %like% "0", Type== "numeric") %>% 
+  group_by(Var) %>%
+  summarise(skew= abs(e1071::skewness(number, na.rm= TRUE))) %>%
+  mutate(summary_use= ifelse(skew >= skewness_threshhold, "median", "mean"))
+
+base0<- left_join(base0, tskew)
+
+## Numeric summaries to two decimal places
+
+numeric0<- base0 %>% filter(Type== "numeric") %>% 
+  group_by(Set, Type, Var, CovName, summary_use, descTable) %>% 
+  numeric_summary(med_format = two_dp, std_format = two_dp) 
+
+categorical0<- base0 %>% filter(Type!= "numeric") %>%
+      group_by(Set, Type, Collapse, descTable, Var, CovName, value) %>% 
+      categorical_summary(std_format = two_dp)
+
+s0<- bind_rows(numeric0, categorical0) 
+get_checksum(s0)
+#  2358932
+
+s1_two_dp<- s0 %>% ungroup() %>% 
+  select(descTable, Set, CovName, value, Comment1) %>% 
+  spread(Set, Comment1) %>% 
+  arrange(CovName) %>%
+  mutate(CovName= str_sub(CovName, 6)) %>% print()
+
+#--
+## Numeric summaries to one decimal place
+
+numeric0<- base0 %>% filter(Type== "numeric") %>% 
+  group_by(Set, Type, Var, CovName, summary_use, descTable) %>% 
+  numeric_summary(med_format = one_dp, std_format = one_dp) 
+
+categorical0<- base0 %>% filter(Type!= "numeric") %>%
+      group_by(Set, Type, Collapse, descTable, Var, CovName, value) %>% 
+      categorical_summary(std_format = one_dp)
+
+s0<- bind_rows(numeric0, categorical0); get_checksum(s0)
+
+#  2358932
+
+s1_one_dp<- s0 %>% ungroup() %>% 
+  select(descTable, Set, CovName, value, Comment1) %>% 
+  spread(Set, Comment1) %>% 
+  arrange(CovName) %>%
+  mutate(CovName= str_sub(CovName, 6)) %>% print()
+  
+reslist$one_dp<- s1_one_dp
+reslist$two_dp<- s1_two_dp
+
+### Please take care to adjust % in liver variables to account for missingness
+
+```
+
+### 5. Imputation report (Supp Table 6)
+```{r}
+
+
+mid<- IP %>% filter(maximum_set==1); 
+nrow(mid) # 30444
+
+## Summarise combined imputation within cognition variables
+shownames(IP, "imp")
+cog_imp<- c("cog_prosMemory_2_is_imp", "trans_cog_RT_2_is_imp", "cog_FI_2_is_imp")
+
+X<- mid[, cog_imp]
+
+mid$cog_is_imp<- X %>% putZeros() %>% apply(1, max)
+mid$cog_is_imp<- ifelse(is.na(mid$cog_standard_4), NA_real_, mid$cog_is_imp)
+table(mid$cog_is_imp)
+#     0     1 
+# 29815   629 
+
+
+## Imputation across everything else...
+
+imp_flags<- shownames(mid, "is_imp") %>% print() 
+
+# No imputation was used in test variables (heart, brain or liver)
+
+mid$height_is_imp<- as.numeric(is.na(mid$height_2) & !is.na(mid$height_2_imp))
+
+imp_flags<- c("bmi_bsa_is_imp", "height_is_imp", "sbp_2_is_imp", "bc_TchoL_is_imp", 
+              "bc_HbA1c_is_imp", "bc_RBC_is_imp", "alcohol_2_is_imp", "mets_is_imputed", "educ_is_imp", "cog_is_imp")
+
+IMP<- mid[, imp_flags]
+
+
+out<- IMP %>% colMeans() %>% flat_frame() %>% rename(Proportion= Value) %>%
+          left_join(IMP %>% colSums() %>% flat_frame() %>% rename(Rows= Value)) %>%
+          mutate(Proportion= round(Proportion, 4)) %>% print() %>% to_clipboard()
+
+reslist$imputation<- out
+
+```
+### 6. Missingness in study variables (Supp Table 5)
+```{r}
+modvars <-  c("ICVF", "ISOVF", "O_volume_brain_grey_white_matter_2",  
+              "O_volume_grey_matter_2",  "O_volume_WMH_cbrt", "ct1",  
+              "log_pdff", "trans_iron", "cmr_LVSV_i", "cmr_LVM_LVEDV", 
+              "cmr_GFI", "log_PDA_AoD")
+
+s1<- mid[, c("liver_subset", "SEM_flag", modvars)] %>% mutate(Set= "0.Whole set")
+s2<- mid %>% filter(liver_subset== 1) %>% .[, modvars] %>% mutate(Set= "1.Liver set")
+s3<- mid %>% filter(SEM_flag== 1) %>% .[, modvars] %>% mutate(Set= "2.SEM set")
+
+sett<- bind_rows(s1, s2, s3) %>% select(-liver_subset, -SEM_flag) %>%
+  gather(key,value, - Set) %>%
+  mutate(nonmissing= as.numeric(!is.na(value)))
+
+t0<- sett %>% count(Set, key, nonmissing) %>% spread(nonmissing, n) %>% adorn_totals(where= "col") %>%
+  mutate(PC_missing= `0` / Total, 
+         PC_present= `1`/ Total, 
+         Comment1= paste0(fmtc(`0`), " (", sprintf("%2.1f", PC_missing*100), ")"),
+         Comment2= paste0(fmtc(`1`), " (", sprintf("%2.1f", PC_present*100), ")"))
+
+t1<- t0 %>% select(Set, key, Comment1, Comment2) %>% 
+  gather(key2, value, -c(Set, key)) %>% 
+  unite(NEWKEY, c(Set, key2)) %>% spread(NEWKEY, value) %>% 
+  left_join(proc %>% select(key= Var, CovName))
+
+reslist$Missing_study_vars<- t1
+```
+
+#---------------------------
+### Save
+```{r}
+write_xlsx(reslist, "HBL_Descriptives_tables_1.xlsx")
+```
+
+
+

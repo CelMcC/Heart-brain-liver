@@ -1,0 +1,328 @@
+---
+title: "Multi-organ imaging clarifies the connected subclinical pathology of the heart-brain-liver axis in UK Biobank   | Create Data script"
+
+author: "Celeste McCracken"
+date:   "25 May 2022"
+output: html_notebook
+---
+
+ 
+## Setup
+```{r}
+
+## See setup file for packages and functions
+source("../R/0_setup.R")
+
+# Withdrawals
+withdrawn<- read_csv("~/Documents/UKB Data Oxford/Data/w59867_20210809.csv", col_names= "f.eid")
+
+standardSource<-   "~/Documents/UKB Test Space/Standard_data/"
+
+alldata<- list()
+```
+
+#-------------------------
+### 1. Covariates
+
+```{r}
+
+cov <- readRDS(paste0(standardSource,"covariates_full.rds"))
+
+keepcols<- c("f.eid", "Ones", "sex", "height_2", "height_2_imp", "date_0", "date_2", "UKB_site_0", "UKB_site_2", "deprivation_Townsend", "ethnic_raw_0", "weight_2", "age_2",  "smoker_2",  "sbp_2", "mets_2", "alcohol_2", "alcohol_con_2", "educ", "educ_fac",  "fh_stroke", "imaging", "bsa_2", "bmi_2", "bsa_2_imp", "bmi_bsa_is_imp", "bmi_2_imp", "ethnicity", "WHR_2", "WHR_2_imp", "WHR_2_is_imputed", "age_sq", "mets_is_imputed", "log_bmi_2", "log_bmi_2_imp",  "trans_mets_2_imp", "UKB_site_name_0", "UKB_site_name_2",  "deprivation_Townsend_imp", "educ_imp", "mets_2_imp", "sbp_2_imp", "alcohol_con_2_imp", "educ_is_imp", "sbp_2_is_imp",  "alcohol_2_is_imp", "Exclusion_criterion",  "waist_0", "waist_2")
+
+cov_subset<- cov[, keepcols]
+
+dim(cov_subset); get_checksum(cov_subset)
+# [1] 502494     49
+# [1] 1688681
+
+
+alldata$cov<- cov_subset
+```
+
+
+### 2. Additional Image confounders
+
+```{r}
+
+confounders <- readRDS(paste0(standardSource, "confound_set.rds")); 
+dim(confounders); get_checksum(confounders)
+# [1] 40677    31
+# [1] 361.5757
+
+keepcols<- c("f.eid", "cf_age_2", "cf_age_sq", "cf_date_2_numeric", "cf_head_size_2", "cf_head_size_2_imp", 
+             "cf_height_2_imp", "cf_pos_T_2", "cf_pos_T_2_imp", "cf_pos_X_2", "cf_pos_X_2_imp", "cf_pos_Y_2", 
+             "cf_pos_Y_2_imp", "cf_pos_Z_2", "cf_pos_Z_2_imp", "cf_sex", "cf_UKB_site_name_2")
+
+alldata$confounders <- confounders[, keepcols]
+```
+### 3. Cognitive Function
+```{r}
+
+cognition <- readRDS(paste0(standardSource, "cognition.rds")); 
+dim(cognition); get_checksum(cognition)
+# [1] 45904    39
+# [1] 125754.3
+
+keepcols<- c("f.eid", "cog_FI_2", "cog_prosMemory_2", "cog_RT_2", 
+             "trans_cog_RT_2", 
+             "cog_FI_2_imp", "cog_prosMemory_2_imp", "trans_cog_RT_2_imp", 
+             "cog_FI_2_is_imp", "cog_prosMemory_2_is_imp", "trans_cog_RT_2_is_imp")
+
+cdf<-  cognition[, keepcols]
+
+alldata$cognition<- cdf
+
+```
+
+
+## 4. CMR Measures
+```{r}
+# CMR Measures  --------------------------------------------------
+
+# Main CMR
+
+# Source: Petersen
+
+cmr0<- read_csv("~/Documents/UKB Data/auto_contours_32K.csv") # 32140
+cmr0<- cmr0 %>% mutate(f.eid= as.character(cmr0$f.eid))
+names(cmr0)<- str_replace(names(cmr0), "\\.","_")
+names(cmr0)[1]<- "f.eid"
+
+head(data.table(cmr0), 3)
+#      f.eid cmr_LVEDV cmr_LVESV cmr_LVSV cmr_LVEF   cmr_LVM cmr_RVEDV cmr_RVESV  cmr_RVSV cmr_RVEF
+# 1: 1001553  145.0604  48.98832  96.0721 66.22902  74.71533  144.1134  56.87352  87.23985 60.53557
+# 2: 1003105  209.2544 102.03830 107.2161 51.23721 132.38854  227.7258 121.40568 106.32015 46.68779
+# 3: 1003177  186.6997  65.80590 120.8938 64.75307 102.82042  193.7150  65.27605 128.43895 66.30305
+
+cmr<- cmr0 %>% convert_feid_to_oxford() %>% filter(!is.na(f.eid))
+
+keepcols<- c("f.eid", "cmr_LVEDV", "cmr_LVESV", "cmr_LVSV", "cmr_LVEF", "cmr_LVM")
+cmr<- cmr[, keepcols]
+
+flag<- at_least_one_flag(cmr); table(flag)
+cmr<- cmr[flag, ]
+cmr_people<- cmr$f.eid
+get_checksum(cmr)
+# 3144.681
+
+alldata$cmr<- cmr
+
+
+```
+## 5. Aortic distensibility
+```{r}
+
+# Aortic distensibility
+
+# Source: Petersen
+
+
+aod<- fread("~/Documents/UKB Data/complete_cardiac_aod_data.csv") #25352
+aod$f.eid<- as.character(aod$f.eid)
+howmany(aod$f.eid)== nrow(aod) # TRUE
+
+ad<- aod %>%
+  mutate(AA_as=   ifelse(is.na(AA_Analysable), 1, AA_Analysable),
+         PDA_as = ifelse(is.na(PDA_Analysable), 1, PDA_Analysable),
+         AA_AoD=  ifelse(AA_as== 0, NA_real_, mean_AA_AoD * 1000),
+         PDA_AoD= ifelse(PDA_as== 0, NA_real_, mean_PDA_AoD * 1000))
+
+ad %>% select(mean_AA_AoD, mean_PDA_AoD, AA_AoD, PDA_AoD) %>% skim()
+
+#  skim_variable n_missing complete_rate    mean      sd        p0      p25     p50     p75    p100 hist 
+# 1 mean_AA_AoD         496         0.980 0.00154 0.00112 0.0000209 0.000730 0.00123 0.00204  0.0193 ▇▁▁▁▁
+# 2 mean_PDA_AoD        162         0.994 0.00244 0.00116 0.000195  0.00160  0.00223 0.00303  0.0175 ▇▁▁▁▁
+# 3 AA_AoD             1599         0.937 1.51    1.08    0.0209    0.720    1.21    2.00    11.1    ▇▂▁▁▁
+# 4 PDA_AoD             648         0.974 2.42    1.14    0.195     1.59     2.22    3.01    14.0    ▇▃▁▁▁
+
+
+ad<- ad %>% select(f.eid, AA_AoD, PDA_AoD) %>% convert_feid_to_oxford()
+get_checksum(ad)
+# 27.34417
+
+flag<- at_least_one_flag(ad); table(flag)
+
+alldata$ad<- ad
+
+```
+
+
+## 6. Brain volumes
+```{r}
+volumes_df<- readRDS(paste0(standardSource, "Volumes_data.rds")) %>% data.frame()
+dim(volumes_df); get_checksum(volumes_df)
+# [1] 43547    23
+# [1] 22295052
+
+keepcols<- c("f.eid", "O_volume_grey_matter_2", "O_volume_grey_matter_div",
+             "O_volume_WMH_2", "O_volume_WMH_cbrt", 
+             "O_volume_brain_grey_white_matter_2", "O_volume_brain_grey_white_matter_div")
+
+vdf<-  volumes_df[, keepcols]
+flag<- at_least_one_flag(vdf)  ## At least one non-empty datum (ie. remove empty rows)
+# FALSE  TRUE 
+#  3852 39695
+
+vdf<- vdf[flag, ]; dim(vdf)
+# 39695     7
+
+alldata$volumes<- vdf
+```
+
+## 7. Brain diffusion
+```{r}
+diff_small<- readRDS("../Dev Data 0/FA_ICVF_ISOVF.rds")
+dim(diff_small); get_checksum(diff_small)
+# [1] 37440     5
+# [1] -5.330381
+
+# c("FA", "ICVF", "ISOVF", "OD")   
+
+diff_big<-   readRDS("../Dev Data 0/normalised_tract_means.rds")
+dim(diff_big); get_checksum(diff_big)
+# [1] 37440   115
+# [1] -134.9869
+
+alldata$diff_small<- diff_small
+alldata$diff_big<- diff_big
+```
+
+
+### 8. Liver
+```{r}
+liver <- readRDS("~/Documents/UKB Data Oxford/Data/Return_Liver_2342.rds") %>% 
+  mutate(f.eid= as.character(f.eid))
+
+flag<- at_least_one_flag(liver)
+sum(flag)==nrow(liver)
+dim(liver); get_checksum(liver)
+
+alldata$liver<- liver
+# [1] 15525     4
+# [1] 2008.648
+
+```
+
+## 9. Set flags and counts
+```{r}
+
+# Get a rough idea of who my target people are going to be...
+
+#temp<- reduce(alldata, full_join)
+
+flag_list<- list()
+
+flag_list$c<- tibble(f.eid= cmr$f.eid) %>%       mutate(cmr_flag= 1)
+flag_list$a<- tibble(f.eid= ad$f.eid) %>%        mutate(AoD_flag= 1)
+flag_list$v<- tibble(f.eid= vdf$f.eid) %>%       mutate(overall_volumes_flag= 1)
+flag_list$d<- tibble(f.eid= diff_small$f.eid) %>%     mutate(diffusion_flag= 1)
+flag_list$l<- tibble(f.eid= liver$f.eid) %>%     mutate(liver_flag= 1)
+flag_list$cog<- tibble(f.eid= cdf$f.eid) %>%     mutate(cognition_flag= 1)
+
+flag_df<- reduce(flag_list, full_join) %>% putZeros()
+
+flag_df[,-1] %>% colSums()
+          #   cmr_flag             AoD_flag overall_volumes_flag       diffusion_flag 
+          #      32117                25352                39695                37440 
+          # liver_flag       cognition_flag 
+          #      15525                45904 
+
+flag_df$flag_count<- rowSums(flag_df[,-1])
+# table(flag_df$flag_count)
+#     1     2     3     4     5     6 
+#  6115  1151 11244  6199 14708  9258
+
+myPeople<- flag_df$f.eid[flag_df$flag_count > 0]
+length(myPeople)
+# 48675
+
+flag_df$cardiac_flag<- with(flag_df, 
+                            ifelse(cmr_flag == 1 | AoD_flag==1, 1, 0)); sum(flag_df$cardiac_flag) # 32415
+
+flag_df$brain_imaging_flag<- pmax(flag_df$overall_volumes_flag, flag_df$diffusion_flag); sum(flag_df$brain_imaging_flag) # 39695
+
+
+### Pairwise analysis counts
+flag_df$liver_brain<-     (flag_df$liver_flag + flag_df$brain_imaging_flag)==2 ; 
+flag_df$liver_cognition<- (flag_df$liver_flag + flag_df$cognition_flag)==2; 
+flag_df$brain_cognition<- (flag_df$brain_imaging_flag + flag_df$cognition_flag)==2; 
+flag_df$heart_cognition<- (flag_df$cardiac_flag + flag_df$cognition_flag)==2; 
+flag_df$heart_brain <-    (flag_df$cardiac_flag + flag_df$brain_imaging_flag)==2; 
+flag_df$heart_liver <-    (flag_df$cardiac_flag + flag_df$liver_flag)==2; 
+
+flag_df[,-1] %>% colSums()
+  #           cmr_flag             AoD_flag overall_volumes_flag       diffusion_flag 
+  #              32117                25352                39695                37440 
+  #         liver_flag       cognition_flag           flag_count         cardiac_flag 
+  #              15525                45904               196033                32415 
+  # brain_imaging_flag          liver_brain      liver_cognition      brain_cognition 
+  #              39695                14135                14110                37215 
+  #    heart_cognition          heart_brain          heart_liver 
+  #              30097                29515                15178 
+
+alldata$flags<- flag_df
+
+```
+
+### 10. Diseases
+```{r}
+## Only need status at imaging variables
+
+diseases<- readRDS("../Dev Data 0/disease_clipon.rds") %>% select(-contains("date")) %>%
+  select(f.eid, contains("status_2"))
+
+keepcols<- c("f.eid", "R03_Hypertension_status_2", "R01_Diabetes_status_2", 
+             "R02_High_cholesterol_status_2")
+
+alldata$diseases<-diseases[, keepcols]
+```
+
+
+
+### 11. Biochemistry
+```{r}
+bc <- readRDS("~/Documents/UKB Test Space/Standard_data/biochemistry_imputed.rds")
+get_checksum(bc)#   5861.204
+
+keepcols<- c("bc_RBC_0_trim", "bc_TchoL_0_trim", "bc_HbA1c_0_trim",
+             "bc_RBC_0_imp", "bc_TchoL_0_imp", "bc_HbA1c_0_imp", 
+             "bc_RBC_is_imp", "bc_TchoL_is_imp", "bc_HbA1c_is_imp")
+
+bb<- bc[, c("f.eid", keepcols)]
+
+alldata$bc<- bb
+
+```
+
+
+
+
+## -----------------------
+
+## Bring it all together 
+```{r}
+IP<- reduce(alldata, full_join) %>% data.frame()
+dim(IP)
+#  502496    236
+
+# Remove withdrawals
+IP<- IP %>% filter(!f.eid %in% withdrawn$f.eid)  
+
+
+saveRDS(IP, "../Dev Data 1/IP_0.rds")
+
+dim(IP); get_checksum(IP)
+# [1] 502462    236
+# [1] 97427.62
+
+saveRDS(alldata, "../Dev Data 1/alldata.rds")
+
+```
+
+### END -------------
+
+```{r}
+#alldata<- readRDS("../Dev Data 0/alldata.rds")
+```
+
